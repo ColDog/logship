@@ -20,6 +20,7 @@ cov:
 build:
 	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o logship .
 	docker build -t $(REPO):$(VERSION) .
+	docker build -t $(REPO):$(VERSION)-builder -f Dockerfile.builder .
 	rm logship
 .PHONY: build
 
