@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coldog/logship/input"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,7 +18,7 @@ func init() {
 }
 
 func TestTail(t *testing.T) {
-	ch := make(chan *Message)
+	ch := make(chan *input.Message)
 	tail := &Tail{Path: tempDir + "/*.log"}
 	tail.Open()
 	go tail.Run(ch)
@@ -47,7 +48,7 @@ func TestTail(t *testing.T) {
 }
 
 func TestTail_Close(t *testing.T) {
-	ch := make(chan *Message)
+	ch := make(chan *input.Message)
 	tail := &Tail{Path: tempDir + "/*.log"}
 	tail.Open()
 	go tail.Run(ch)
