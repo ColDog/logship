@@ -1,133 +1,111 @@
-package input
+package tail
 
 import (
+	"bufio"
 	"log"
-	"path/filepath"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/coldog/logship/input"
-	"github.com/hpcloud/tail"
+	"github.com/coldog/logship/plugins/tail/watcher"
 )
 
-func init() {
-	input.Register("tail", func() input.Input { return &Tail{} })
+const (
+	PollStrategy = "Poll"
+
+	PollInterval = 10 * time.Millisecond
+)
+
+type file struct {
+	file    *os.File
+	scanner *bufio.Scanner
 }
 
-// Tail implements a multiple file tailer Input plugin.
 type Tail struct {
 	input.BaseInput
 
-	Path   string `json:"path"`
-	Format string `json:"format"`
-	Tag    string `json:"tag"`
+	Path     string
+	Strategy string
 
-	files  map[string]bool
-	remove chan string
+	events  chan watcher.Event
+	files   map[string]*file
+	watcher watcher.Watcher
 }
 
-// Open implements Open for the Input interface.
-func (s *Tail) Open() error {
-	if s.Tag == "" {
-		s.Tag = "tail"
+func (t *Tail) Close() {
+	t.BaseInput.Close()
+	t.watcher.Close()
+	close(t.events)
+
+	for _, f := range t.files {
+		f.file.Close()
 	}
-	s.files = map[string]bool{}
-	s.remove = make(chan string, 100)
-	return s.BaseInput.Open()
 }
 
-// Run implements Run for the Input interface. This polls for new files and
-// starts a tail process in a new goroutine for every new discovered file.
-func (s *Tail) Run(out chan *input.Message) {
-	s.walk(out)
-MAIN:
+func (t *Tail) Open() error {
+	var w watcher.Watcher
+
+	switch t.Strategy {
+	case PollStrategy:
+		w = &watcher.Poller{Path: t.Path, Interval: PollInterval}
+	default:
+		w = &watcher.Poller{Path: t.Path, Interval: PollInterval}
+	}
+	t.watcher = w
+	t.events = make(chan watcher.Event)
+	t.files = map[string]*file{}
+	go w.Run(t.events)
+	return t.BaseInput.Open()
+}
+
+func (t *Tail) Run(out chan *input.Message) {
 	for {
 		select {
-		case <-time.After(300 * time.Millisecond):
-			s.walk(out)
-		case name := <-s.remove:
-			delete(s.files, name)
-		case <-s.Done():
-			break MAIN
-		}
-	}
-
-	defer s.Finish()
-
-	if len(s.files) == 0 {
-		return
-	}
-
-	log.Println("[DEBU] tail: closing")
-	for name := range s.remove {
-		log.Printf("[DEBU] tail: closing: %s %+v", name, s.files)
-		delete(s.files, name)
-		if len(s.files) == 0 {
+		case <-t.Done():
+			t.Finish()
 			return
+		case evt := <-t.events:
+			switch evt.Type {
+			case watcher.CreateEvent:
+				t.handleCreateEvent(evt, out)
+			case watcher.RemoveEvent:
+				t.handleRemoveEvent(evt, out)
+			case watcher.WriteEvent:
+				t.handleWriteEvent(evt, out)
+			}
 		}
 	}
 }
 
-func (s *Tail) tail(path string, out chan *input.Message) {
-	spl := strings.Split(path, "/")
-	tag := s.Tag + "." + spl[len(spl)-1]
-	log.Printf("[DEBU] tail: tailing: %s", tag)
+func (t *Tail) handleRemoveEvent(evt watcher.Event, out chan *input.Message) {
+	delete(t.files, evt.Path)
+}
 
-	t, err := tail.TailFile(path, tail.Config{
-		Follow: true,
-		Logger: tail.DiscardingLogger,
-	})
-	if err != nil {
-		s.remove <- path
-		log.Printf("[WARN] tail: error opening tail %s: %v", tag, err)
+func (t *Tail) handleWriteEvent(evt watcher.Event, out chan *input.Message) {
+	f, ok := t.files[evt.Path]
+	if !ok {
+		log.Printf("[WARN] tail: file not exist: %s", evt.Path)
 		return
 	}
+	for f.scanner.Scan() {
+		msg := input.MessagePool.Get().(*input.Message)
+		msg.Time = time.Now()
+		msg.Data["message"] = strings.TrimSpace(f.scanner.Text())
+		msg.Tag = evt.Path
 
-	defer t.Cleanup()
-
-	for {
-		select {
-		case line, ok := <-t.Lines:
-			if !ok {
-				s.remove <- path
-				log.Printf("[DEBU] tail: closed: %s", tag)
-				return
-			}
-			if line.Err == tail.ErrStop {
-				s.remove <- path
-				log.Printf("[DEBU] tail: removing file: %s", tag)
-				return
-			}
-			if line.Err != nil {
-				log.Printf("[WARN] tail: error tailing %s: %v", tag, line.Err)
-				continue
-			}
-
-			// Parse the message.
-			msg := input.MessagePool.Get().(*input.Message)
-			msg.Time = line.Time
-			msg.Data["message"] = line.Text
-			msg.Tag = tag
-
-			out <- msg
-		case <-s.Done():
-			s.remove <- path
-			log.Printf("[DEBU] tail: exiting: %s", tag)
-			return
-		}
+		out <- msg
 	}
 }
 
-func (s *Tail) walk(out chan *input.Message) {
-	matches, err := filepath.Glob(s.Path)
+func (t *Tail) handleCreateEvent(evt watcher.Event, out chan *input.Message) {
+	f, err := os.Open(evt.Path)
 	if err != nil {
-		log.Printf("[WARN] tail: failed to find matches: %v", err)
+		log.Printf("[WARN] tail: failed to create a file: %v", err)
 		return
 	}
-	for _, path := range matches {
-		if _, ok := s.files[path]; !ok {
-			s.files[path] = true
-			go s.tail(path, out)
-		}
+	t.files[evt.Path] = &file{
+		file:    f,
+		scanner: bufio.NewScanner(f),
 	}
 }

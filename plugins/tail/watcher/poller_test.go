@@ -1,4 +1,4 @@
-package tail
+package watcher
 
 import (
 	"fmt"
@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coldog/logship/input"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,12 +16,10 @@ func init() {
 	tempDir, _ = ioutil.TempDir("", "test_tail")
 }
 
-func TestTail_Run(t *testing.T) {
-	ch := make(chan *input.Message)
-	tail := &Tail{Path: tempDir + "/*.log"}
-	err := tail.Open()
-	assert.Nil(t, err)
-	go tail.Run(ch)
+func TestPoller_Run(t *testing.T) {
+	ch := make(chan Event)
+	poller := &Poller{Path: tempDir + "/*.log", Interval: 20 * time.Millisecond}
+	go poller.Run(ch)
 
 	go func() {
 		f, err := os.OpenFile(tempDir+"/test.log", os.O_CREATE|os.O_WRONLY, 0755)
@@ -39,7 +36,7 @@ func TestTail_Run(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		os.Remove(f.Name())
 		time.Sleep(50 * time.Millisecond)
-		tail.Close()
+		poller.Close()
 		close(ch)
 	}()
 
@@ -48,4 +45,5 @@ func TestTail_Run(t *testing.T) {
 		fmt.Printf("%+v\n", e)
 		count++
 	}
+	assert.Equal(t, 3, count)
 }

@@ -20,6 +20,12 @@
   version = "v1.0.0"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/rjeczalik/notify"
+  packages = ["."]
+  revision = "88a54d914928e1faebb1c2195605dc87bd98dc27"
+
+[[projects]]
   name = "github.com/stretchr/testify"
   packages = ["assert"]
   revision = "69483b4bd14f5845b5a1e55bca19e954e827f1d0"
@@ -46,6 +52,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "438fd84566ed757ea76aac640cf4b20a5119fd870758f4a25ec344bd192d9d40"
+  inputs-digest = "42e5871411455ead9459ca03877fbca623e13aa6b1a0a243ae21b3a0828fb014"
   solver-name = "gps-cdcl"
   solver-version = 1
